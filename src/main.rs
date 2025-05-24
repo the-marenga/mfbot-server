@@ -53,6 +53,17 @@ async fn report_players(
     for player in players {
         log::info!("Players reported: {player:?}");
 
+        let Ok(mut server) = url::Url::parse(&player.server) else {
+            log::error!("Could not parse url: {}", player.server);
+            continue;
+        };
+        if server.set_scheme("").is_err() {
+            log::error!("Could not set scheme: {server}");
+            continue;
+        }
+        server.set_path("");
+        let server_url = server.to_string();
+
         sqlx::query!(
             "INSERT INTO raw_player 
             (fetch_date, name, server, info, description, guild, \
@@ -60,13 +71,13 @@ async fn report_players(
             VALUES (?, ?, ?, ?, ?, ?, ?)",
             player.fetch_date,
             player.name,
-            player.server,
+            server_url,
             player.info,
             player.description,
             player.guild,
             player.soldier_advice,
         )
-        .execute(&get_db().await)
+        .execute(&get_db().await?)
         .await
         .map_err(MFBotError::DBError)?;
     }
@@ -99,7 +110,7 @@ async fn report_bug(Json(args): Json<BugReportArgs>) -> Result<(), Response> {
         args.hwid,
         current_time
     )
-    .execute(&get_db().await)
+    .execute(&get_db().await?)
     .await
     .map_err(MFBotError::DBError)?;
 
@@ -110,7 +121,9 @@ async fn report_bug(Json(args): Json<BugReportArgs>) -> Result<(), Response> {
 #[allow(missing_docs)]
 pub enum MFBotError {
     #[error("DB Error: {0}")]
-    DBError(sqlx::Error),
+    DBError(#[from] sqlx::Error),
+    #[error("Migrate Error: {0}")]
+    MigrateError(#[from] sqlx::migrate::MigrateError),
 }
 
 impl From<MFBotError> for axum::response::Response {

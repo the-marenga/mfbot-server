@@ -1,7 +1,9 @@
 use log::error;
 use sqlx::{Sqlite, sqlite::*};
 
-pub async fn get_db() -> sqlx::Pool<Sqlite> {
+use crate::MFBotError;
+
+pub async fn get_db() -> Result<sqlx::Pool<Sqlite>, MFBotError> {
     use async_once_cell::OnceCell;
     static DB: OnceCell<sqlx::Pool<Sqlite>> = OnceCell::new();
     DB.get_or_try_init(async {
@@ -23,9 +25,8 @@ pub async fn get_db() -> sqlx::Pool<Sqlite> {
 
         sqlx::migrate!("./migrations").run(&pool).await?;
 
-        Result::<sqlx::Pool<Sqlite>, sqlx::Error>::Ok(pool)
+        Result::<sqlx::Pool<Sqlite>, MFBotError>::Ok(pool)
     })
     .await
     .cloned()
-    .unwrap()
 }

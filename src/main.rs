@@ -5,7 +5,7 @@ use axum::{
     routing::{get, post},
 };
 use chrono::Utc;
-use db::{get_db, init_db};
+use db::get_db;
 use serde::Deserialize;
 use sf_api::gamestate::unlockables::EquipmentIdent;
 pub mod db;
@@ -13,8 +13,6 @@ pub mod db;
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn core::error::Error>> {
     tracing_subscriber::fmt::init();
-
-    init_db().await?;
 
     let app = Router::new()
         .route("/", get(root))
@@ -55,20 +53,20 @@ async fn report_players(
     for player in players {
         log::info!("Players reported: {player:?}");
 
-        sqlx::query(
+        sqlx::query!(
             "INSERT INTO raw_player 
             (fetch_date, name, server, info, description, guild, \
              soldier_advice) 
             VALUES (?, ?, ?, ?, ?, ?, ?)",
+            player.fetch_date,
+            player.name,
+            player.server,
+            player.info,
+            player.description,
+            player.guild,
+            player.soldier_advice,
         )
-        .bind(player.fetch_date)
-        .bind(player.name)
-        .bind(player.server)
-        .bind(player.info)
-        .bind(player.description)
-        .bind(player.guild)
-        .bind(player.soldier_advice)
-        .execute(&get_db())
+        .execute(&get_db().await)
         .await
         .map_err(MFBotError::DBError)?;
     }
@@ -88,21 +86,20 @@ pub struct BugReportArgs {
 }
 
 async fn report_bug(Json(args): Json<BugReportArgs>) -> Result<(), Response> {
-    log::info!("Bug reported: {args:?}");
-
-    sqlx::query(
+    let current_time = Utc::now().to_rfc3339();
+    sqlx::query!(
         "INSERT INTO error (stacktrace, version, additional_info, os, arch, \
          error_text, hwid, timestamp) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        args.stacktrace,
+        args.version,
+        args.additional_info,
+        args.os,
+        args.arch,
+        args.error_text,
+        args.hwid,
+        current_time
     )
-    .bind(args.stacktrace)
-    .bind(args.version)
-    .bind(args.additional_info)
-    .bind(args.os)
-    .bind(args.arch)
-    .bind(args.error_text)
-    .bind(args.hwid)
-    .bind(Utc::now().to_rfc3339())
-    .execute(&get_db())
+    .execute(&get_db().await)
     .await
     .map_err(MFBotError::DBError)?;
 

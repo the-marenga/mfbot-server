@@ -1,3 +1,5 @@
+use std::fmt::Write;
+
 use axum::{
     Json, Router,
     http::StatusCode,
@@ -7,10 +9,13 @@ use axum::{
 use chrono::Utc;
 use db::{get_db, get_server_id};
 use log::error;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use sf_api::gamestate::{
-    ServerTime, social::OtherPlayer, unlockables::EquipmentIdent,
+    ServerTime,
+    social::OtherPlayer,
+    unlockables::{EquipmentIdent, ScrapBook},
 };
+use sqlx::prelude::FromRow;
 pub mod db;
 
 #[tokio::main]
@@ -20,6 +25,7 @@ async fn main() -> Result<(), Box<dyn core::error::Error>> {
     let app = Router::new()
         .route("/", get(root))
         .route("/updatePlayers", post(report_players))
+        .route("/scrapbookAdvice", post(scrapbook_advice))
         .route("/report", post(report_bug));
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:4949").await?;
@@ -37,6 +43,68 @@ pub fn compress_ident(ident: EquipmentIdent) -> i32 {
     res |= (ident.typ as i64) << 24; // 24..28
     res |= (ident.class.map(|a| a as i64).unwrap_or(0)) << 28; // 28..32
     res as i32
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ScrapBookAdviceArgs {
+    raw_scrapbook: String,
+    server: String,
+    max_level: u16,
+    max_attrs: u64,
+}
+
+#[derive(Debug, Serialize, FromRow)]
+pub struct ScrapBookAdvice {
+    player_name: String,
+    new_count: u32,
+}
+
+pub async fn scrapbook_advice(
+    Json(args): Json<ScrapBookAdviceArgs>,
+) -> Result<Json<Vec<ScrapBookAdvice>>, Response> {
+    let sb = ScrapBook::parse(&args.raw_scrapbook)
+        .ok_or(MFBotError::InvalidScrapbook)?;
+    let collected: Vec<_> = sb.items.into_iter().map(compress_ident).collect();
+
+    let db = get_db().await?;
+    let server_id = get_server_id(&db, &args.server).await?;
+
+    let mut filter = format!("WHERE server_id = {server_id} ");
+
+    if !collected.is_empty() {
+        filter.push_str("AND ident NOT IN (");
+        for (pos, ident) in collected.into_iter().enumerate() {
+            if pos > 0 {
+                filter.push(',');
+            }
+            filter
+                .write_fmt(format_args!("{ident}"))
+                .map_err(|_| MFBotError::Internal)?
+        }
+        filter.push(')');
+    }
+
+    let sql = format!(
+        "SELECT name, new_count
+        FROM player
+        NATURAL JOIN (
+            SELECT player_id, server_id, count(*) as new_count
+            FROM equipment
+            {filter}
+            GROUP BY player_id
+            ORDER BY COUNT(*) DESC
+        )
+        WHERE level <= {} AND attributes <= {}
+        LIMIT 25",
+        args.max_level, args.max_attrs
+    );
+
+    Ok(Json(
+        sqlx::query_as(&sql)
+            .fetch_all(&db)
+            .await
+            .map_err(MFBotError::DBError)?,
+    ))
 }
 
 #[derive(Debug, Deserialize)]
@@ -67,7 +135,7 @@ async fn insert_player(
     player: RawOtherPlayer,
 ) -> Result<(), MFBotError> {
     log::info!("Player reported: {}@{}", player.name, player.server);
-    let server_id = get_server_id(db, &player.server).await;
+    let server_id = get_server_id(db, &player.server).await?;
     let data: Result<Vec<i64>, _> =
         player.info.trim().split("/").map(|a| a.parse()).collect();
     let Ok(data) = data else {
@@ -87,17 +155,54 @@ async fn insert_player(
             format!("Could not parse fetch date: {}", player.fetch_date).into(),
         ));
     };
+    let fetch_time = fetch_time.to_utc().timestamp();
+
     let pid = other.player_id;
-    sqlx::query!(
+    let experience = other.experience as i64;
+
+    let equip_idents: Vec<_> = other
+        .equipment
+        .0
+        .values()
+        .filter_map(|item| {
+            Some(compress_ident(item.as_ref()?.equipment_ident()?))
+        })
+        .collect();
+
+    let attributes = other
+        .base_attributes
+        .values()
+        .map(|a| i64::from(*a))
+        .sum::<i64>()
+        + other
+            .bonus_attributes
+            .values()
+            .map(|a| i64::from(*a))
+            .sum::<i64>();
+
+    let equip_count = equip_idents.len() as i32;
+    let mut tx = db.begin().await?;
+    let last_update = sqlx::query_scalar!(
         "INSERT INTO player
-            (player_id, server_id, name)
-            VALUES (?, ?, ?)
-            ON CONFLICT(server_id, player_id) DO NOTHING",
+            (player_id, server_id, name, level, attributes, last_update, \
+         equip_count)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(server_id, player_id) DO UPDATE
+            SET
+              level = EXCLUDED.level,
+              attributes = EXCLUDED.attributes,
+              last_update = EXCLUDED.last_update
+            WHERE player.last_update < EXCLUDED.last_update
+        RETURNING last_update",
         pid,
         server_id,
-        player.name
+        player.name,
+        other.level,
+        attributes,
+        fetch_time,
+        equip_count
     )
-    .execute(db)
+    .fetch_one(&mut *tx)
     .await?;
 
     let mut guild_id = None;
@@ -112,7 +217,7 @@ async fn insert_player(
             server_id,
             guild_name,
         )
-        .fetch_one(db)
+        .fetch_one(&mut *tx)
         .await?;
         guild_id = Some(id);
     }
@@ -125,7 +230,7 @@ async fn insert_player(
         RETURNING description_id",
         description,
     )
-    .fetch_one(db)
+    .fetch_one(&mut *tx)
     .await?;
 
     let response_id = sqlx::query_scalar!(
@@ -136,16 +241,13 @@ async fn insert_player(
         RETURNING otherplayer_resp_id",
         player.info,
     )
-    .fetch_one(db)
+    .fetch_one(&mut *tx)
     .await?;
 
-    let fetch_time = fetch_time.to_utc().timestamp();
-    let experience = other.experience as i64;
-    let info_id = sqlx::query_scalar!(
+    sqlx::query_scalar!(
         "INSERT INTO player_info (player_id, server_id, fetch_time, xp, \
          level, soldier_advice, description_id, guild_id, otherplayer_resp_id)
-        VALUES (?,?,?,?,?,?,?,?,?)
-        RETURNING player_info_id",
+        VALUES (?,?,?,?,?,?,?,?,?)",
         pid,
         server_id,
         fetch_time,
@@ -156,33 +258,14 @@ async fn insert_player(
         guild_id,
         response_id
     )
-    .fetch_one(db)
-    .await?
-    .ok_or(MFBotError::Internal)?;
+    .execute(&mut *tx)
+    .await?;
 
-    let newest_info_id = sqlx::query_scalar!(
-        "SELECT player_info_id
-        FROM player_info
-        WHERE player_id = ? AND server_id = ?
-        ORDER BY fetch_time desc
-        LIMIT 1",
-        pid,
-        server_id
-    )
-    .fetch_one(db)
-    .await?
-    .ok_or(MFBotError::Internal)?;
-
-    if newest_info_id != info_id {
-        return Ok(());
+    if last_update != fetch_time {
+        // We are not the newest info, so we should not update equipment
+        return Ok(tx.commit().await?);
     }
     // The info we received is the most up to date
-
-    let equip_idents = other.equipment.0.values().filter_map(|item| {
-        Some(compress_ident(item.as_ref()?.equipment_ident()?))
-    });
-
-    let mut tx = db.begin().await?;
     sqlx::query!(
         "DELETE FROM equipment WHERE server_id = ? AND player_id = ?",
         server_id,
@@ -248,6 +331,10 @@ pub enum MFBotError {
     MigrateError(#[from] sqlx::migrate::MigrateError),
     #[error("Invalid player reported: {0}")]
     InvalidPlayer(Box<str>),
+    #[error("Invalid scrapbook")]
+    InvalidScrapbook,
+    #[error("Invalid server")]
+    InvalidServer,
     #[error("Internal Server Error")]
     Internal,
 }

@@ -34,14 +34,14 @@ pub async fn get_db() -> Result<sqlx::Pool<Sqlite>, MFBotError> {
     .cloned()
 }
 
-pub async fn get_server_id(db: &Pool<Sqlite>, url: &str) -> Option<i64> {
+pub async fn get_server_id(db: &Pool<Sqlite>, url: &str) -> Result<i64, MFBotError> {
     let Ok(mut server) = url::Url::parse(url) else {
         log::error!("Could not parse url: {}", url);
-        return None;
+        return Err(MFBotError::InvalidServer);
     };
     if server.set_scheme("https").is_err() {
         log::error!("Could not set scheme: {server}");
-        return None;
+        return Err(MFBotError::InvalidServer);
     }
     server.set_path("");
     let url = server.to_string();
@@ -49,12 +49,12 @@ pub async fn get_server_id(db: &Pool<Sqlite>, url: &str) -> Option<i64> {
     static LOOKUP_CACHE: LazyLock<RwLock<HashMap<String, i64>>> =
         LazyLock::new(|| RwLock::const_new(HashMap::new()));
     if let Some(id) = LOOKUP_CACHE.read().await.get(&url) {
-        return Some(*id);
+        return Ok(*id);
     }
 
     let mut cache = LOOKUP_CACHE.write().await;
     if let Some(id) = cache.get(&url) {
-        return Some(*id);
+        return Ok(*id);
     }
     let server_id = sqlx::query_scalar!(
         "INSERT INTO server (url)
@@ -65,9 +65,8 @@ pub async fn get_server_id(db: &Pool<Sqlite>, url: &str) -> Option<i64> {
     )
     .fetch_one(db)
     .await
-    .map_err(MFBotError::DBError)
-    .ok()?;
+    .map_err(MFBotError::DBError)?;
 
     cache.insert(url.to_string(), server_id);
-    Some(server_id)
+    Ok(server_id)
 }

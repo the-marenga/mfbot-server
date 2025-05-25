@@ -5,9 +5,12 @@ use axum::{
     routing::{get, post},
 };
 use chrono::Utc;
-use db::get_db;
+use db::{get_db, get_server_id};
+use log::error;
 use serde::Deserialize;
-use sf_api::gamestate::unlockables::EquipmentIdent;
+use sf_api::gamestate::{
+    ServerTime, social::OtherPlayer, unlockables::EquipmentIdent,
+};
 pub mod db;
 
 #[tokio::main]
@@ -50,38 +53,157 @@ pub struct RawOtherPlayer {
 async fn report_players(
     Json(players): Json<Vec<RawOtherPlayer>>,
 ) -> Result<(), Response> {
+    let db = get_db().await?;
     for player in players {
-        log::info!("Players reported: {player:?}");
-
-        let Ok(mut server) = url::Url::parse(&player.server) else {
-            log::error!("Could not parse url: {}", player.server);
-            continue;
-        };
-        if server.set_scheme("").is_err() {
-            log::error!("Could not set scheme: {server}");
-            continue;
+        if let Err(err) = insert_player(&db, player).await {
+            error!("{err}");
         }
-        server.set_path("");
-        let server_url = server.to_string();
-
-        sqlx::query!(
-            "INSERT INTO raw_player 
-            (fetch_date, name, server, info, description, guild, \
-             soldier_advice) 
-            VALUES (?, ?, ?, ?, ?, ?, ?)",
-            player.fetch_date,
-            player.name,
-            server_url,
-            player.info,
-            player.description,
-            player.guild,
-            player.soldier_advice,
-        )
-        .execute(&get_db().await?)
-        .await
-        .map_err(MFBotError::DBError)?;
     }
     Ok(())
+}
+
+async fn insert_player(
+    db: &sqlx::Pool<sqlx::Sqlite>,
+    player: RawOtherPlayer,
+) -> Result<(), MFBotError> {
+    log::info!("Player reported: {}@{}", player.name, player.server);
+    let server_id = get_server_id(db, &player.server).await;
+    let data: Result<Vec<i64>, _> =
+        player.info.trim().split("/").map(|a| a.parse()).collect();
+    let Ok(data) = data else {
+        return Err(MFBotError::InvalidPlayer(
+            format!("Could not parse player {}", player.name).into(),
+        ));
+    };
+    let Ok(other) = OtherPlayer::parse(&data, ServerTime::default()) else {
+        return Err(MFBotError::InvalidPlayer(
+            format!("Could not parse player {}", player.name).into(),
+        ));
+    };
+    let Ok(fetch_time) =
+        chrono::DateTime::parse_from_rfc3339(&player.fetch_date)
+    else {
+        return Err(MFBotError::InvalidPlayer(
+            format!("Could not parse fetch date: {}", player.fetch_date).into(),
+        ));
+    };
+    let pid = other.player_id;
+    sqlx::query!(
+        "INSERT INTO player
+            (player_id, server_id, name)
+            VALUES (?, ?, ?)
+            ON CONFLICT(server_id, player_id) DO NOTHING",
+        pid,
+        server_id,
+        player.name
+    )
+    .execute(db)
+    .await?;
+
+    let mut guild_id = None;
+    if let Some(guild) = &player.guild {
+        let guild_name = guild.trim().to_lowercase();
+        let id = sqlx::query_scalar!(
+            "INSERT INTO guild
+            (server_id, name)
+            VALUES (?, ?)
+            ON CONFLICT(server_id, name) DO UPDATE SET is_removed = 0
+            RETURNING guild_id",
+            server_id,
+            guild_name,
+        )
+        .fetch_one(db)
+        .await?;
+        guild_id = Some(id);
+    }
+
+    let description = player.description.unwrap_or_default();
+    let description_id = sqlx::query_scalar!(
+        "INSERT INTO description (description) VALUES (?)
+        ON CONFLICT(description)
+        DO UPDATE SET description_id = description.description_id
+        RETURNING description_id",
+        description,
+    )
+    .fetch_one(db)
+    .await?;
+
+    let response_id = sqlx::query_scalar!(
+        "INSERT INTO otherplayer_resp (otherplayer_resp) VALUES (?)
+        ON CONFLICT(otherplayer_resp)
+        DO UPDATE SET otherplayer_resp_id = \
+         otherplayer_resp.otherplayer_resp_id
+        RETURNING otherplayer_resp_id",
+        player.info,
+    )
+    .fetch_one(db)
+    .await?;
+
+    let fetch_time = fetch_time.to_utc().timestamp();
+    let experience = other.experience as i64;
+    let info_id = sqlx::query_scalar!(
+        "INSERT INTO player_info (player_id, server_id, fetch_time, xp, \
+         level, soldier_advice, description_id, guild_id, otherplayer_resp_id)
+        VALUES (?,?,?,?,?,?,?,?,?)
+        RETURNING player_info_id",
+        pid,
+        server_id,
+        fetch_time,
+        experience,
+        other.level,
+        player.soldier_advice,
+        description_id,
+        guild_id,
+        response_id
+    )
+    .fetch_one(db)
+    .await?
+    .ok_or(MFBotError::Internal)?;
+
+    let newest_info_id = sqlx::query_scalar!(
+        "SELECT player_info_id
+        FROM player_info
+        WHERE player_id = ? AND server_id = ?
+        ORDER BY fetch_time desc
+        LIMIT 1",
+        pid,
+        server_id
+    )
+    .fetch_one(db)
+    .await?
+    .ok_or(MFBotError::Internal)?;
+
+    if newest_info_id != info_id {
+        return Ok(());
+    }
+    // The info we received is the most up to date
+
+    let equip_idents = other.equipment.0.values().filter_map(|item| {
+        Some(compress_ident(item.as_ref()?.equipment_ident()?))
+    });
+
+    let mut tx = db.begin().await?;
+    sqlx::query!(
+        "DELETE FROM equipment WHERE server_id = ? AND player_id = ?",
+        server_id,
+        pid
+    )
+    .execute(&mut *tx)
+    .await?;
+
+    for ident in equip_idents {
+        sqlx::query!(
+            "INSERT INTO equipment (server_id, player_id, ident)
+            VAlUES (?, ?, ?)",
+            server_id,
+            pid,
+            ident
+        )
+        .execute(&mut *tx)
+        .await?;
+    }
+
+    return Ok(tx.commit().await?);
 }
 
 #[derive(Debug, Deserialize)]
@@ -124,6 +246,10 @@ pub enum MFBotError {
     DBError(#[from] sqlx::Error),
     #[error("Migrate Error: {0}")]
     MigrateError(#[from] sqlx::migrate::MigrateError),
+    #[error("Invalid player reported: {0}")]
+    InvalidPlayer(Box<str>),
+    #[error("Internal Server Error")]
+    Internal,
 }
 
 impl From<MFBotError> for axum::response::Response {

@@ -85,22 +85,37 @@ pub async fn scrapbook_advice(
         filter.push(')');
     }
 
-    // FIXME: This is probably wrong
     let sql = format!(
         "SELECT name, new_count
         FROM player
         NATURAL JOIN (
-            SELECT player_id, server_id, count(*) as new_count
+            SELECT player_id, count(*) as new_count
             FROM equipment
             {filter}
             GROUP BY player_id
-            ORDER BY COUNT(*) DESC
         )
-        WHERE level <= {} AND attributes <= {}
-        ORDER BY level ASC, attributes ASC
+        WHERE level <= {} AND attributes <= {} AND is_removed = false
+        ORDER BY new_count DESC, level ASC, attributes ASC
         LIMIT 25",
         args.max_level, args.max_attrs
     );
+
+    // NOTE: The is basically doing this:
+    //
+    // SELECT name, COUNT(*)
+    // FROM player
+    // NATURAL JOIN equipment
+    // WHERE server_id = ?
+    //  AND level <= ?
+    //  AND attributes <= ?
+    //  AND is_removed = false
+    //  AND ident NOT IN (...)
+    // GROUP BY player_id
+    // ORDER BY COUNT(*) DESC
+    // LIMIT 25;
+    //
+    // The more readable query is a lot slower though, so we group equipment
+    // first and then filter players
 
     Ok(Json(
         sqlx::query_as(&sql)
@@ -317,13 +332,9 @@ async fn insert_player(
     .execute(&mut *tx)
     .await?;
 
-    sqlx::query!(
-        "DELETE FROM equipment WHERE server_id = ? AND player_id = ?",
-        server_id,
-        pid
-    )
-    .execute(&mut *tx)
-    .await?;
+    sqlx::query!("DELETE FROM equipment WHERE player_id = ?", pid)
+        .execute(&mut *tx)
+        .await?;
 
     for ident in equip_idents {
         sqlx::query!(
@@ -401,9 +412,10 @@ pub async fn get_characters_to_crawl(
         "WITH cte AS (
           SELECT rowid
           FROM player
-          WHERE server_id = ? AND next_report_attempt < ?
-          LIMIT ?
-        )
+          WHERE server_id = ?
+            AND next_report_attempt < ?
+            AND is_removed = false
+          LIMIT ? )
         UPDATE player
         SET next_report_attempt = ?
         WHERE rowid IN (SELECT rowid FROM cte)

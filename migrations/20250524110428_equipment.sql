@@ -35,11 +35,17 @@ CREATE TABLE player (
     UNIQUE (server_id, name)
 );
 
-CREATE INDEX player_stats_idx ON player (player_id, server_id, level, attributes);
+CREATE INDEX player_stats_idx ON player (player_id, level, attributes)
+WHERE
+    is_removed = false;
 
-CREATE INDEX player_nude_idx ON player (server_id, equip_count, level, attributes);
+CREATE INDEX player_nude_idx ON player (server_id, equip_count, level, attributes)
+WHERE
+    is_removed = false;
 
-CREATE INDEX player_crawl_idx ON player (server_id, next_report_attempt);
+CREATE INDEX player_crawl_idx ON player (server_id, next_report_attempt)
+WHERE
+    is_removed = false;
 
 CREATE TABLE guild (
     guild_id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
@@ -63,7 +69,6 @@ CREATE TABLE player_info (
     player_info_id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
     player_id INTEGER NOT NULL REFERENCES player (player_id),
     fetch_time INTEGER NOT NULL,
-
     xp INTEGER NOT NULL,
     level INTEGER NOT NULL,
     soldier_advice INTEGER NOT NULL,

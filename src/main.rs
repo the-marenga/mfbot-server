@@ -166,7 +166,7 @@ async fn insert_player(
             format!("Could not parse player {}", player.name).into(),
         ));
     };
-    let Ok(fetch_time) =
+    let Ok(mut fetch_time) =
         chrono::DateTime::parse_from_rfc3339(&player.fetch_date)
             .map(|a| a.to_utc())
     else {
@@ -174,6 +174,10 @@ async fn insert_player(
             format!("Could not parse fetch date: {}", player.fetch_date).into(),
         ));
     };
+    let now = Utc::now();
+    if fetch_time > now {
+        fetch_time = now;
+    }
 
     let experience = other.experience as i64;
 
@@ -208,7 +212,7 @@ async fn insert_player(
     let fetch_timestamp = fetch_time.timestamp();
 
     let pid = if let Some(existing) = existing {
-        if existing.last_reported.is_some_and(|a| a > fetch_timestamp) {
+        if existing.last_reported.is_some_and(|a| a >= fetch_timestamp) {
             log::warn!("Discarded player update for {}", player.name);
             return Ok(());
         }
@@ -390,6 +394,9 @@ pub struct GetCharactersArgs {
     limit: u32,
 }
 
+const fn minutes(minutes: u64) -> Duration {
+    Duration::from_secs(60 * minutes)
+}
 const fn hours(hours: u64) -> Duration {
     Duration::from_secs(60 * 60 * hours)
 }
@@ -404,7 +411,7 @@ pub async fn get_characters_to_crawl(
     let server_id = get_server_id(&db, args.server).await?;
 
     let now = Utc::now().timestamp();
-    let next_retry = now + hours(1).as_secs() as i64;
+    let next_retry = now + minutes(30).as_secs() as i64;
 
     let limit = args.limit.min(500);
 
@@ -430,6 +437,99 @@ pub async fn get_characters_to_crawl(
     .map_err(MFBotError::DBError)?;
 
     Ok(Json(todo))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct GetHofArgs {
+    server: String,
+    player_count: usize,
+    limit: u32,
+}
+
+pub async fn get_hof_pages_to_crawl(
+    Json(args): Json<GetHofArgs>,
+) -> Result<Json<Vec<i64>>, Response> {
+    let db = get_db().await?;
+    let server_id = get_server_id(&db, args.server).await?;
+
+    let mut tx = db.begin().await.map_err(MFBotError::DBError)?;
+
+    let now = Utc::now();
+    let latest_accepted_crawling_start = (now - days(3)).timestamp();
+    let now = now.timestamp();
+
+    let last_hof_crawl = sqlx::query_scalar!(
+        "WITH cte AS (
+          SELECT rowid
+          FROM server
+          WHERE server_id = ? AND last_hof_crawl < ?
+        )
+        UPDATE server
+        SET last_hof_crawl = ?
+        WHERE rowid IN (SELECT rowid FROM cte)
+        RETURNING server_id",
+        server_id,
+        latest_accepted_crawling_start,
+        now
+    )
+    .fetch_optional(&mut *tx)
+    .await
+    .map_err(MFBotError::DBError)?;
+
+    if last_hof_crawl.is_some() {
+        // We restart HoF crawling
+        sqlx::query!(
+            "DELETE FROM todo_hof_page WHERE server_id = ?",
+            server_id
+        )
+        .execute(&mut *tx)
+        .await
+        .map_err(MFBotError::DBError)?;
+
+        let total_pages = (args.player_count as f32 / 51.0) as u32;
+
+        sqlx::query!(
+            "WITH RECURSIVE cnt(x) AS (
+              SELECT 0
+              UNION ALL
+              SELECT x + 1 FROM cnt WHERE x < ?
+            )
+            INSERT INTO todo_hof_page (server_id, idx)
+            SELECT ?, x FROM cnt;
+        ",
+            total_pages,
+            server_id,
+        )
+        .execute(&mut *tx)
+        .await
+        .map_err(MFBotError::DBError)?;
+    }
+    tx.commit().await.map_err(MFBotError::DBError)?;
+
+    let limit = args.limit.min(100);
+    let next_attempt_at = now + minutes(15).as_secs() as i64;
+
+    let pages_to_crawl = sqlx::query_scalar!(
+        "WITH cte AS (
+          SELECT rowid
+          FROM todo_hof_page
+          WHERE server_id = ? AND next_report_attempt < ?
+          LIMIT ?
+        )
+        UPDATE todo_hof_page
+        SET next_report_attempt = ?
+        WHERE rowid IN (SELECT rowid FROM cte)
+        RETURNING idx",
+        server_id,
+        now,
+        limit,
+        next_attempt_at
+    )
+    .fetch_all(&db)
+    .await
+    .map_err(MFBotError::DBError)?;
+
+    Ok(Json(pages_to_crawl))
 }
 
 #[derive(Debug, thiserror::Error)]

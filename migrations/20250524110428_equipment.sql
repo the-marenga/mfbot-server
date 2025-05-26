@@ -7,8 +7,11 @@ CREATE TABLE server (
 CREATE TABLE todo_hof_page (
     server_id INTEGER NOT NULL REFERENCES server (server_id),
     idx INTEGER NOT NULL,
+    next_report_attempt INT NOT NULL DEFAULT 0,
     PRIMARY KEY (server_id, idx)
 );
+
+CREATE INDEX hof_todo_idx ON todo_hof_page (server_id);
 
 CREATE TABLE player (
     player_id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,

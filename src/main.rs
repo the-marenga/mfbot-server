@@ -1,4 +1,4 @@
-use std::fmt::Write;
+use std::{fmt::Write, time::Duration};
 
 use axum::{
     Json, Router,
@@ -16,6 +16,7 @@ use sf_api::gamestate::{
     unlockables::{EquipmentIdent, ScrapBook},
 };
 use sqlx::prelude::FromRow;
+
 pub mod db;
 
 #[tokio::main]
@@ -41,7 +42,7 @@ pub fn compress_ident(ident: EquipmentIdent) -> i32 {
     let mut res = ident.model_id as i64; // 0..16
     res |= (ident.color as i64) << 16; // 16..24
     res |= (ident.typ as i64) << 24; // 24..28
-    res |= (ident.class.map(|a| a as i64).unwrap_or(0)) << 28; // 28..32
+    res |= (ident.class.map(|a| a as i64 + 1).unwrap_or(0)) << 28; // 28..32
     res as i32
 }
 
@@ -67,7 +68,7 @@ pub async fn scrapbook_advice(
     let collected: Vec<_> = sb.items.into_iter().map(compress_ident).collect();
 
     let db = get_db().await?;
-    let server_id = get_server_id(&db, &args.server).await?;
+    let server_id = get_server_id(&db, args.server).await?;
 
     let mut filter = format!("WHERE server_id = {server_id} ");
 
@@ -84,6 +85,7 @@ pub async fn scrapbook_advice(
         filter.push(')');
     }
 
+    // FIXME: This is probably wrong
     let sql = format!(
         "SELECT name, new_count
         FROM player
@@ -95,6 +97,7 @@ pub async fn scrapbook_advice(
             ORDER BY COUNT(*) DESC
         )
         WHERE level <= {} AND attributes <= {}
+        ORDER BY level ASC, attributes ASC
         LIMIT 25",
         args.max_level, args.max_attrs
     );
@@ -135,7 +138,7 @@ async fn insert_player(
     player: RawOtherPlayer,
 ) -> Result<(), MFBotError> {
     log::info!("Player reported: {}@{}", player.name, player.server);
-    let server_id = get_server_id(db, &player.server).await?;
+    let server_id = get_server_id(db, player.server).await?;
     let data: Result<Vec<i64>, _> =
         player.info.trim().split("/").map(|a| a.parse()).collect();
     let Ok(data) = data else {
@@ -150,64 +153,118 @@ async fn insert_player(
     };
     let Ok(fetch_time) =
         chrono::DateTime::parse_from_rfc3339(&player.fetch_date)
+            .map(|a| a.to_utc())
     else {
         return Err(MFBotError::InvalidPlayer(
             format!("Could not parse fetch date: {}", player.fetch_date).into(),
         ));
     };
-    let fetch_time = fetch_time.to_utc().timestamp();
 
-    let pid = other.player_id;
     let experience = other.experience as i64;
 
     let equip_idents: Vec<_> = other
         .equipment
         .0
         .values()
-        .filter_map(|item| {
-            Some(compress_ident(item.as_ref()?.equipment_ident()?))
-        })
+        .filter_map(|item| item.as_ref()?.equipment_ident().map(compress_ident))
         .collect();
 
     let attributes = other
         .base_attributes
         .values()
-        .map(|a| i64::from(*a))
-        .sum::<i64>()
-        + other
-            .bonus_attributes
-            .values()
-            .map(|a| i64::from(*a))
-            .sum::<i64>();
+        .chain(other.bonus_attributes.values())
+        .copied()
+        .map(i64::from)
+        .sum::<i64>();
 
     let equip_count = equip_idents.len() as i32;
     let mut tx = db.begin().await?;
-    let last_update = sqlx::query_scalar!(
-        "INSERT INTO player
-            (player_id, server_id, name, level, attributes, last_update, \
-         equip_count)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(server_id, player_id) DO UPDATE
-            SET
-              level = EXCLUDED.level,
-              attributes = EXCLUDED.attributes,
-              last_update = EXCLUDED.last_update
-            WHERE player.last_update < EXCLUDED.last_update
-        RETURNING last_update",
-        pid,
+
+    let existing = sqlx::query!(
+        "SELECT player_id, level, attributes, last_reported, xp, last_changed
+         FROM player
+         WHERE server_id = ? AND name = ?",
         server_id,
-        player.name,
-        other.level,
-        attributes,
-        fetch_time,
-        equip_count
+        player.name
     )
-    .fetch_one(&mut *tx)
+    .fetch_optional(&mut *tx)
     .await?;
+
+    let fetch_timestamp = fetch_time.timestamp();
+
+    let pid = if let Some(existing) = existing {
+        if existing.last_reported.is_some_and(|a| a > fetch_timestamp) {
+            log::warn!("Discarded player update for {}", player.name);
+            return Ok(());
+        }
+        let has_changed = existing.attributes.is_none_or(|a| a != attributes)
+            || existing.xp.is_none_or(|a| a != experience)
+            || existing.level.is_none_or(|a| a != other.level as i64);
+
+        let next_attempt = if has_changed {
+            (fetch_time + hours(12)).timestamp()
+        } else {
+            match existing.last_changed {
+                Some(x) if x + days(3).as_secs() as i64 > fetch_timestamp => {
+                    (fetch_time + days(1)).timestamp()
+                }
+                Some(x) if x + days(7).as_secs() as i64 > fetch_timestamp => {
+                    (fetch_time + days(3)).timestamp()
+                }
+                _ => (fetch_time + days(14)).timestamp(),
+            }
+        };
+
+        let last_changed = existing
+            .last_changed
+            .filter(|_| !has_changed)
+            .unwrap_or(fetch_timestamp);
+
+        // Update the player with new info
+        sqlx::query!(
+            "UPDATE player
+            SET level = ?, attributes = ?, next_report_attempt = ?,
+                last_reported = ?, last_changed = ?, equip_count = ?, xp = ?
+            WHERE player_id = ?",
+            other.level,
+            attributes,
+            next_attempt,
+            fetch_timestamp,
+            last_changed,
+            equip_count,
+            experience,
+            existing.player_id
+        )
+        .execute(&mut *tx)
+        .await?;
+        existing.player_id
+    } else {
+        let next_attempt = (fetch_time + days(1)).timestamp();
+        // Insert a new player and so far unseen player. This is very unlikely
+        // since players should be created after HoF search
+        sqlx::query_scalar!(
+            "INSERT INTO player
+            (server_id, name, level, attributes, next_report_attempt, \
+             last_reported, last_changed, equip_count, xp)
+            VALUES (?,?,?,?,?,?,?,?,?)
+            RETURNING player_id",
+            server_id,
+            player.name,
+            other.level,
+            attributes,
+            next_attempt,
+            fetch_timestamp,
+            fetch_timestamp,
+            equip_count,
+            experience
+        )
+        .fetch_one(&mut *tx)
+        .await?
+    };
 
     let mut guild_id = None;
     if let Some(guild) = &player.guild {
-        let guild_name = guild.trim().to_lowercase();
+        let guild_name = guild;
         let id = sqlx::query_scalar!(
             "INSERT INTO guild
             (server_id, name)
@@ -245,12 +302,11 @@ async fn insert_player(
     .await?;
 
     sqlx::query_scalar!(
-        "INSERT INTO player_info (player_id, server_id, fetch_time, xp, \
-         level, soldier_advice, description_id, guild_id, otherplayer_resp_id)
-        VALUES (?,?,?,?,?,?,?,?,?)",
+        "INSERT INTO player_info (player_id, fetch_time, xp, level, \
+         soldier_advice, description_id, guild_id, otherplayer_resp_id)
+        VALUES (?,?,?,?,?,?,?,?)",
         pid,
-        server_id,
-        fetch_time,
+        fetch_timestamp,
         experience,
         other.level,
         player.soldier_advice,
@@ -261,11 +317,6 @@ async fn insert_player(
     .execute(&mut *tx)
     .await?;
 
-    if last_update != fetch_time {
-        // We are not the newest info, so we should not update equipment
-        return Ok(tx.commit().await?);
-    }
-    // The info we received is the most up to date
     sqlx::query!(
         "DELETE FROM equipment WHERE server_id = ? AND player_id = ?",
         server_id,
@@ -320,6 +371,53 @@ async fn report_bug(Json(args): Json<BugReportArgs>) -> Result<(), Response> {
     .map_err(MFBotError::DBError)?;
 
     Ok(())
+}
+
+#[derive(Debug, Deserialize)]
+pub struct GetCharactersArgs {
+    server: String,
+    limit: u32,
+}
+
+const fn hours(hours: u64) -> Duration {
+    Duration::from_secs(60 * 60 * hours)
+}
+const fn days(days: u64) -> Duration {
+    Duration::from_secs(60 * 60 * 24 * days)
+}
+
+pub async fn get_characters_to_crawl(
+    Json(args): Json<GetCharactersArgs>,
+) -> Result<Json<Vec<String>>, Response> {
+    let db = get_db().await?;
+    let server_id = get_server_id(&db, args.server).await?;
+
+    let now = Utc::now().timestamp();
+    let next_retry = now + hours(1).as_secs() as i64;
+
+    let limit = args.limit.min(500);
+
+    let todo = sqlx::query_scalar!(
+        "WITH cte AS (
+          SELECT rowid
+          FROM player
+          WHERE server_id = ? AND next_report_attempt < ?
+          LIMIT ?
+        )
+        UPDATE player
+        SET next_report_attempt = ?
+        WHERE rowid IN (SELECT rowid FROM cte)
+        RETURNING name",
+        server_id,
+        now,
+        limit,
+        next_retry
+    )
+    .fetch_all(&db)
+    .await
+    .map_err(MFBotError::DBError)?;
+
+    Ok(Json(todo))
 }
 
 #[derive(Debug, thiserror::Error)]

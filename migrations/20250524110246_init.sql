@@ -1,5 +1,5 @@
 -- Add migration script here
-CREATE TABLE IF NOT EXISTS error (
+CREATE TABLE error (
     error_id INTEGER PRIMARY KEY AUTOINCREMENT,
     stacktrace TEXT,
     version INT,

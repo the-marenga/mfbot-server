@@ -7,9 +7,10 @@ edition = "2024"
 async-once-cell = "0.5.4"
 axum = "0.8.3"
 chrono = "0.4.41"
+fastrand = "2.3.0"
 log = "0.4.27"
 serde = { version = "1.0.219", features = ["derive"] }
-sf-api = { git = "https://github.com/the-marenga/sf-api.git", branch = "other-player-pub", default-features = false }
+sf-api = { git = "https://github.com/the-marenga/sf-api.git", branch = "other-player-pub" }
 sqlx = { version = "0.8.5", features = ["runtime-tokio", "sqlite", "macros"] }
 thiserror = "2.0.12"
 tokio = { version = "1.44.2", features = ["fs", "macros", "rt-multi-thread"] }

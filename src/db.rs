@@ -11,7 +11,7 @@ pub async fn get_db() -> Result<sqlx::Pool<Sqlite>, MFBotError> {
     static DB: OnceCell<sqlx::Pool<Sqlite>> = OnceCell::new();
     DB.get_or_try_init(async {
         let options = SqliteConnectOptions::new()
-            .filename(env!("DATABASE_URL"))
+            .filename(env!("DATABASE_URL").split_once(":").unwrap().1)
             .journal_mode(SqliteJournalMode::Wal)
             .synchronous(SqliteSynchronous::Normal)
             .auto_vacuum(sqlx::sqlite::SqliteAutoVacuum::Incremental)
@@ -26,7 +26,7 @@ pub async fn get_db() -> Result<sqlx::Pool<Sqlite>, MFBotError> {
                 error!("Database connection error: {:?}", e);
             })?;
 
-        sqlx::migrate!("./migrations").run(&pool).await?;
+        // sqlx::migrate!("./migrations").run(&pool).await?;
 
         Result::<sqlx::Pool<Sqlite>, MFBotError>::Ok(pool)
     })
@@ -34,8 +34,17 @@ pub async fn get_db() -> Result<sqlx::Pool<Sqlite>, MFBotError> {
     .cloned()
 }
 
-pub async fn get_server_id(db: &Pool<Sqlite>, url: &str) -> Result<i64, MFBotError> {
-    let Ok(mut server) = url::Url::parse(url) else {
+static LOOKUP_CACHE: LazyLock<RwLock<HashMap<String, i64>>> =
+    LazyLock::new(|| RwLock::const_new(HashMap::new()));
+
+pub async fn get_server_id(
+    db: &Pool<Sqlite>,
+    mut url: String,
+) -> Result<i64, MFBotError> {
+    if !url.starts_with("http") {
+        url = format!("https://{url}");
+    }
+    let Ok(mut server) = url::Url::parse(&url) else {
         log::error!("Could not parse url: {}", url);
         return Err(MFBotError::InvalidServer);
     };
@@ -46,8 +55,6 @@ pub async fn get_server_id(db: &Pool<Sqlite>, url: &str) -> Result<i64, MFBotErr
     server.set_path("");
     let url = server.to_string();
 
-    static LOOKUP_CACHE: LazyLock<RwLock<HashMap<String, i64>>> =
-        LazyLock::new(|| RwLock::const_new(HashMap::new()));
     if let Some(id) = LOOKUP_CACHE.read().await.get(&url) {
         return Ok(*id);
     }
@@ -59,7 +66,7 @@ pub async fn get_server_id(db: &Pool<Sqlite>, url: &str) -> Result<i64, MFBotErr
     let server_id = sqlx::query_scalar!(
         "INSERT INTO server (url)
         VALUES ($1)
-        ON CONFLICT(url) DO UPDATE SET url = excluded.url
+        ON CONFLICT(url) DO UPDATE SET last_hof_crawl = server.last_hof_crawl
         RETURNING server_id",
         url
     )
@@ -67,6 +74,7 @@ pub async fn get_server_id(db: &Pool<Sqlite>, url: &str) -> Result<i64, MFBotErr
     .await
     .map_err(MFBotError::DBError)?;
 
+    log::info!("Fed server cache with {url}");
     cache.insert(url.to_string(), server_id);
     Ok(server_id)
 }

@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
-use sqlx::prelude::FromRow;
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct GetHofArgs {
@@ -27,7 +26,6 @@ pub struct BugReportArgs {
     pub error_text: Option<String>,
 }
 
-
 #[derive(Debug, Deserialize, Serialize)]
 pub struct RawOtherPlayer {
     pub name: String,
@@ -39,7 +37,6 @@ pub struct RawOtherPlayer {
     pub fetch_date: String,
 }
 
-
 #[derive(Debug, Deserialize, Serialize)]
 pub struct ScrapBookAdviceArgs {
     pub raw_scrapbook: String,
@@ -48,7 +45,8 @@ pub struct ScrapBookAdviceArgs {
     pub max_attrs: u64,
 }
 
-#[derive(Debug, Serialize, FromRow)]
+#[derive(Debug, Serialize)]
+#[cfg_attr(feature = "server", derive(sqlx::prelude::FromRow))]
 pub struct ScrapBookAdvice {
     pub player_name: String,
     pub new_count: u32,

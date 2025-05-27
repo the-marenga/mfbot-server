@@ -4,15 +4,39 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-async-once-cell = "0.5.4"
-axum = "0.8.4"
-chrono = "0.4.41"
-fastrand = "2.3.0"
-log = "0.4.27"
+async-once-cell = { version = "0.5", optional = true }
+axum = { version = "0.8", optional = true }
+chrono = { version = "0.4", optional = true }
+fastrand = { version = "2.3", optional = true }
+log = { version = "0.4", optional = true }
 serde = { version = "1.0.219", features = ["derive"] }
-sf-api = { git = "https://github.com/the-marenga/sf-api.git", branch = "other-player-pub", default-features = false }
-sqlx = { version = "0.8.6", features = ["runtime-tokio", "sqlite", "macros"] }
-thiserror = "2.0.12"
-tokio = { version = "1.45.1", features = ["fs", "macros", "rt-multi-thread"] }
-tracing-subscriber = "0.3.19"
-url = "2.5.4"
+sf-api = { git = "https://github.com/the-marenga/sf-api.git", branch = "other-player-pub", default-features = false, optional = true }
+sqlx = { version = "0.8.6", features = [
+    "runtime-tokio",
+    "sqlite",
+    "macros",
+], optional = true }
+thiserror = { version = "2.0.12", optional = true }
+tokio = { version = "1.45.1", features = [
+    "fs",
+    "macros",
+    "rt-multi-thread",
+], optional = true }
+tracing-subscriber = { optional = true, version = "0.3.19" }
+url = { version = "2.5.4", optional = true }
+
+[features]
+default = ["server"]
+server = [
+    "dep:async-once-cell",
+    "dep:axum",
+    "dep:chrono",
+    "dep:fastrand",
+    "dep:log",
+    "dep:sf-api",
+    "dep:sqlx",
+    "dep:thiserror",
+    "dep:tokio",
+    "dep:tracing-subscriber",
+    "dep:url",
+]

@@ -9,6 +9,7 @@ use axum::{
 use chrono::Utc;
 use db::{get_db, get_server_id};
 use log::error;
+use mfbot_server::*;
 use serde::{Deserialize, Serialize};
 use sf_api::gamestate::{
     ServerTime,
@@ -47,20 +48,6 @@ pub fn compress_ident(ident: EquipmentIdent) -> i32 {
     res |= (ident.typ as i64) << 24; // 24..28
     res |= (ident.class.map(|a| a as i64 + 1).unwrap_or(0)) << 28; // 28..32
     res as i32
-}
-
-#[derive(Debug, Deserialize)]
-pub struct ScrapBookAdviceArgs {
-    raw_scrapbook: String,
-    server: String,
-    max_level: u16,
-    max_attrs: u64,
-}
-
-#[derive(Debug, Serialize, FromRow)]
-pub struct ScrapBookAdvice {
-    player_name: String,
-    new_count: u32,
 }
 
 pub async fn scrapbook_advice(
@@ -128,16 +115,6 @@ pub async fn scrapbook_advice(
     ))
 }
 
-#[derive(Debug, Deserialize)]
-pub struct RawOtherPlayer {
-    name: String,
-    server: String,
-    info: String,
-    description: Option<String>,
-    guild: Option<String>,
-    soldier_advice: Option<i64>,
-    fetch_date: String,
-}
 
 async fn report_players(
     Json(players): Json<Vec<RawOtherPlayer>>,
@@ -358,17 +335,7 @@ async fn insert_player(
     return Ok(tx.commit().await?);
 }
 
-#[derive(Debug, Deserialize)]
-pub struct BugReportArgs {
-    version: i32,
-    os: String,
-    arch: String,
-    hwid: String,
 
-    stacktrace: Option<String>,
-    additional_info: Option<String>,
-    error_text: Option<String>,
-}
 
 async fn report_bug(Json(args): Json<BugReportArgs>) -> Result<(), Response> {
     let current_time = Utc::now().to_rfc3339();
@@ -391,11 +358,6 @@ async fn report_bug(Json(args): Json<BugReportArgs>) -> Result<(), Response> {
     Ok(())
 }
 
-#[derive(Debug, Deserialize)]
-pub struct GetCharactersArgs {
-    server: String,
-    limit: u32,
-}
 
 const fn minutes(minutes: u64) -> Duration {
     Duration::from_secs(60 * minutes)
@@ -442,12 +404,6 @@ pub async fn get_characters_to_crawl(
     Ok(Json(todo))
 }
 
-#[derive(Debug, Deserialize)]
-pub struct GetHofArgs {
-    server: String,
-    player_count: usize,
-    limit: u32,
-}
 
 pub async fn get_hof_pages_to_crawl(
     Json(args): Json<GetHofArgs>,
@@ -533,13 +489,6 @@ pub async fn get_hof_pages_to_crawl(
     .map_err(MFBotError::DBError)?;
 
     Ok(Json(pages_to_crawl))
-}
-
-#[derive(Debug, Deserialize)]
-pub struct ReportHofArgs {
-    server: String,
-    // page => Ranklistplayer
-    pages: HashMap<u32, String>,
 }
 
 pub async fn report_hof_pages(

@@ -1,4 +1,4 @@
-use std::{fmt::Write, time::Duration};
+use std::{collections::HashMap, fmt::Write, time::Duration};
 
 use axum::{
     Json, Router,
@@ -12,10 +12,10 @@ use log::error;
 use serde::{Deserialize, Serialize};
 use sf_api::gamestate::{
     ServerTime,
-    social::OtherPlayer,
+    social::{HallOfFamePlayer, OtherPlayer},
     unlockables::{EquipmentIdent, ScrapBook},
 };
-use sqlx::prelude::FromRow;
+use sqlx::{QueryBuilder, prelude::FromRow};
 
 pub mod db;
 
@@ -25,8 +25,11 @@ async fn main() -> Result<(), Box<dyn core::error::Error>> {
 
     let app = Router::new()
         .route("/", get(root))
-        .route("/updatePlayers", post(report_players))
-        .route("/scrapbookAdvice", post(scrapbook_advice))
+        .route("/scrapbook_advice", post(scrapbook_advice))
+        .route("/get_crawl_hof_pages", post(get_hof_pages_to_crawl))
+        .route("/get_crawl_players", post(get_hof_pages_to_crawl))
+        .route("/report_players", post(report_players))
+        .route("/report_hof", post(report_hof_pages))
         .route("/report", post(report_bug));
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:4949").await?;
@@ -530,6 +533,67 @@ pub async fn get_hof_pages_to_crawl(
     .map_err(MFBotError::DBError)?;
 
     Ok(Json(pages_to_crawl))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ReportHofArgs {
+    server: String,
+    // page => Ranklistplayer
+    pages: HashMap<u32, String>,
+}
+
+pub async fn report_hof_pages(
+    Json(args): Json<ReportHofArgs>,
+) -> Result<(), Response> {
+    let db = get_db().await?;
+    let server_id = get_server_id(&db, args.server).await?;
+
+    for (page, info) in args.pages {
+        let mut tx = db.begin().await.map_err(MFBotError::DBError)?;
+        let mut players = vec![];
+        for player in info.as_str().trim_matches(';').split(';') {
+            // Stop parsing once we receive an empty player
+            if player.ends_with(",,,0,0,0,") {
+                break;
+            }
+            match HallOfFamePlayer::parse(player) {
+                Ok(x) => {
+                    players.push(x);
+                }
+                Err(err) => log::warn!("{err}"),
+            }
+        }
+
+        sqlx::query!(
+            "DELETE FROM todo_hof_page
+            WHERE server_id = ? AND idx = ?",
+            server_id,
+            page
+        )
+        .execute(&mut *tx)
+        .await
+        .map_err(MFBotError::DBError)?;
+
+        if players.is_empty() {
+            tx.commit().await.map_err(MFBotError::DBError)?;
+            continue;
+        }
+
+        let mut b =
+            QueryBuilder::new("INSERT INTO player (server_id, name, level) ");
+        b.push_values(players, |mut b, player| {
+            b.push_bind(server_id)
+                .push_bind(player.name)
+                .push_bind(player.level);
+        });
+        b.push(" ON CONFLICT DO NOTHING");
+        b.build()
+            .execute(&mut *tx)
+            .await
+            .map_err(MFBotError::DBError)?;
+        tx.commit().await.map_err(MFBotError::DBError)?;
+    }
+    Ok(())
 }
 
 #[derive(Debug, thiserror::Error)]

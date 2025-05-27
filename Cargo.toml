@@ -5,14 +5,14 @@ edition = "2024"
 
 [dependencies]
 async-once-cell = "0.5.4"
-axum = "0.8.3"
+axum = "0.8.4"
 chrono = "0.4.41"
 fastrand = "2.3.0"
 log = "0.4.27"
 serde = { version = "1.0.219", features = ["derive"] }
-sf-api = { git = "https://github.com/the-marenga/sf-api.git", branch = "other-player-pub" }
-sqlx = { version = "0.8.5", features = ["runtime-tokio", "sqlite", "macros"] }
+sf-api = { git = "https://github.com/the-marenga/sf-api.git", branch = "other-player-pub", default-features = false }
+sqlx = { version = "0.8.6", features = ["runtime-tokio", "sqlite", "macros"] }
 thiserror = "2.0.12"
-tokio = { version = "1.44.2", features = ["fs", "macros", "rt-multi-thread"] }
+tokio = { version = "1.45.1", features = ["fs", "macros", "rt-multi-thread"] }
 tracing-subscriber = "0.3.19"
 url = "2.5.4"

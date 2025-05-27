@@ -24,7 +24,7 @@ CREATE TABLE player (
     -- The total sum of all attributes this player has
     attributes INT,
     -- The next time, that this player is scheduled to be looked at again
-    next_report_attempt INT NOT NULL,
+    next_report_attempt INT NOT NULL DEFAULT 0,
     -- The last time, that this player was reported at
     last_reported INT,
     -- The last time, that this player has changed in any way (xp/attributes)

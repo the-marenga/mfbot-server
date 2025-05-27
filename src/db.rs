@@ -20,13 +20,13 @@ pub async fn get_db() -> Result<sqlx::Pool<Sqlite>, MFBotError> {
             .create_if_missing(true);
 
         let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .min_connections(1)
             .connect_with(options)
             .await
             .inspect_err(|e| {
                 error!("Database connection error: {:?}", e);
             })?;
-
-        // sqlx::migrate!("./migrations").run(&pool).await?;
 
         Result::<sqlx::Pool<Sqlite>, MFBotError>::Ok(pool)
     })

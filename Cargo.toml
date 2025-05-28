@@ -9,6 +9,7 @@ axum = { version = "0.8", optional = true }
 chrono = { version = "0.4", optional = true }
 fastrand = { version = "2.3", optional = true }
 log = { version = "0.4", optional = true }
+md5 = "0.7.0"
 serde = { version = "1.0.219", features = ["derive"] }
 sf-api = { git = "https://github.com/the-marenga/sf-api.git", branch = "other-player-pub", default-features = false, optional = true }
 sqlx = { version = "0.8.6", features = [
@@ -24,6 +25,7 @@ tokio = { version = "1.45.1", features = [
 ], optional = true }
 tracing-subscriber = { optional = true, version = "0.3.19" }
 url = { version = "2.5.4", optional = true }
+zstd = "0.13.3"
 
 [features]
 default = ["server"]

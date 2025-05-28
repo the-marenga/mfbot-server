@@ -21,6 +21,8 @@ CREATE TABLE player (
     level INT,
     -- The current xp of this player
     xp INT,
+    -- The current xp of this player
+    honor INT,
     -- The total sum of all attributes this player has
     attributes INT,
     -- The next time, that this player is scheduled to be looked at again
@@ -65,7 +67,8 @@ CREATE TABLE description (
 
 CREATE TABLE otherplayer_resp (
     otherplayer_resp_id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
-    otherplayer_resp TEXT UNIQUE
+    otherplayer_resp BLOB NOT NULL,
+    hash TEXT NOT NULL UNIQUE
 );
 
 CREATE TABLE player_info (
@@ -73,6 +76,7 @@ CREATE TABLE player_info (
     player_id INTEGER NOT NULL REFERENCES player (player_id),
     fetch_time INTEGER NOT NULL,
     xp INTEGER NOT NULL,
+    honor INT NOT NULL,
     level INTEGER NOT NULL,
     soldier_advice INTEGER NOT NULL,
     description_id INTEGER NOT NULL,

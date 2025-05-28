@@ -10,10 +10,13 @@ use chrono::Utc;
 use db::{get_db, get_server_id};
 use log::error;
 use mfbot_server::*;
-use sf_api::gamestate::{
-    ServerTime,
-    social::{HallOfFamePlayer, OtherPlayer},
-    unlockables::{EquipmentIdent, ScrapBook},
+use sf_api::{
+    gamestate::{
+        ServerTime,
+        social::{HallOfFamePlayer, OtherPlayer},
+        unlockables::{EquipmentIdent, ScrapBook},
+    },
+    misc::sha1_hash,
 };
 use sqlx::QueryBuilder;
 
@@ -257,8 +260,8 @@ async fn insert_player(
         sqlx::query_scalar!(
             "INSERT INTO player
             (server_id, name, level, attributes, next_report_attempt, \
-             last_reported, last_changed, equip_count, xp)
-            VALUES (?,?,?,?,?,?,?,?,?)
+             last_reported, last_changed, equip_count, xp, honor)
+            VALUES (?,?,?,?,?,?,?,?,?,?)
             RETURNING player_id",
             server_id,
             player.name,
@@ -268,7 +271,8 @@ async fn insert_player(
             fetch_timestamp,
             fetch_timestamp,
             equip_count,
-            experience
+            experience,
+            other.honor
         )
         .fetch_one(&mut *tx)
         .await?
@@ -302,21 +306,30 @@ async fn insert_player(
     .fetch_one(&mut *tx)
     .await?;
 
+    use zstd::stream::encode_all;
+
+    let resp = encode_all(player.info.as_bytes(), 3)
+        .map_err(|_| MFBotError::Internal)?;
+
+    let digest = md5::compute(&resp);
+    let hash = format!("{:x}", digest);
+
     let response_id = sqlx::query_scalar!(
-        "INSERT INTO otherplayer_resp (otherplayer_resp) VALUES (?)
-        ON CONFLICT(otherplayer_resp)
+        "INSERT INTO otherplayer_resp (otherplayer_resp, hash) VALUES (?, ?)
+        ON CONFLICT(hash)
         DO UPDATE SET otherplayer_resp_id = \
          otherplayer_resp.otherplayer_resp_id
         RETURNING otherplayer_resp_id",
-        player.info,
+        resp,
+        hash
     )
     .fetch_one(&mut *tx)
     .await?;
 
     sqlx::query_scalar!(
         "INSERT INTO player_info (player_id, fetch_time, xp, level, \
-         soldier_advice, description_id, guild_id, otherplayer_resp_id)
-        VALUES (?,?,?,?,?,?,?,?)",
+         soldier_advice, description_id, guild_id, otherplayer_resp_id, honor)
+        VALUES (?,?,?,?,?,?,?,?,?)",
         pid,
         fetch_timestamp,
         experience,
@@ -324,7 +337,8 @@ async fn insert_player(
         player.soldier_advice,
         description_id,
         guild_id,
-        response_id
+        response_id,
+        other.honor
     )
     .execute(&mut *tx)
     .await?;

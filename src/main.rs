@@ -163,7 +163,9 @@ async fn insert_player(
         .equipment
         .0
         .values()
-        .filter_map(|item| item.as_ref()?.equipment_ident().map(compress_ident))
+        .flatten()
+        .filter(|a| !a.model_id >= 100)
+        .filter_map(|item| item.equipment_ident().map(compress_ident))
         .collect();
 
     let attributes = other

@@ -170,6 +170,8 @@ async fn insert_player(
         .filter_map(|item| item.equipment_ident().map(compress_ident))
         .collect();
 
+    let equip_count = other.equipment.0.values().flatten().count() as i32;
+
     let attributes = other
         .base_attributes
         .values()
@@ -178,7 +180,6 @@ async fn insert_player(
         .map(i64::from)
         .sum::<i64>();
 
-    let equip_count = equip_idents.len() as i32;
     let mut tx = db.begin().await?;
 
     let existing = sqlx::query!(

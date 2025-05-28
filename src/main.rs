@@ -1,4 +1,4 @@
-use std::{collections::HashMap, fmt::Write, time::Duration};
+use std::{fmt::Write, time::Duration};
 
 use axum::{
     Json, Router,
@@ -10,13 +10,12 @@ use chrono::Utc;
 use db::{get_db, get_server_id};
 use log::error;
 use mfbot_server::*;
-use serde::{Deserialize, Serialize};
 use sf_api::gamestate::{
     ServerTime,
     social::{HallOfFamePlayer, OtherPlayer},
     unlockables::{EquipmentIdent, ScrapBook},
 };
-use sqlx::{QueryBuilder, prelude::FromRow};
+use sqlx::QueryBuilder;
 
 pub mod db;
 
@@ -28,7 +27,7 @@ async fn main() -> Result<(), Box<dyn core::error::Error>> {
         .route("/", get(root))
         .route("/scrapbook_advice", post(scrapbook_advice))
         .route("/get_crawl_hof_pages", post(get_hof_pages_to_crawl))
-        .route("/get_crawl_players", post(get_hof_pages_to_crawl))
+        .route("/get_crawl_players", post(get_characters_to_crawl))
         .route("/report_players", post(report_players))
         .route("/report_hof", post(report_hof_pages))
         .route("/report", post(report_bug));
@@ -115,7 +114,6 @@ pub async fn scrapbook_advice(
     ))
 }
 
-
 async fn report_players(
     Json(players): Json<Vec<RawOtherPlayer>>,
 ) -> Result<(), Response> {
@@ -201,16 +199,31 @@ async fn insert_player(
             || existing.level.is_none_or(|a| a != other.level as i64);
 
         let next_attempt = if has_changed {
-            (fetch_time + hours(12)).timestamp()
+            (fetch_time
+                + hours(fastrand::u64(11..14))
+                + minutes(fastrand::u64(0..=59)))
+            .timestamp()
         } else {
             match existing.last_changed {
                 Some(x) if x + days(3).as_secs() as i64 > fetch_timestamp => {
-                    (fetch_time + days(1)).timestamp()
+                    (fetch_time
+                        + days(1)
+                        + hours(fastrand::u64(0..12))
+                        + minutes(fastrand::u64(0..=59)))
+                    .timestamp()
                 }
                 Some(x) if x + days(7).as_secs() as i64 > fetch_timestamp => {
-                    (fetch_time + days(3)).timestamp()
+                    (fetch_time
+                        + days(fastrand::u64(2..=4))
+                        + hours(fastrand::u64(0..23))
+                        + minutes(fastrand::u64(0..=59)))
+                    .timestamp()
                 }
-                _ => (fetch_time + days(14)).timestamp(),
+                _ => (fetch_time
+                    + days(fastrand::u64(10..=14))
+                    + hours(fastrand::u64(0..=23))
+                    + minutes(fastrand::u64(0..=59)))
+                .timestamp(),
             }
         };
 
@@ -335,8 +348,6 @@ async fn insert_player(
     return Ok(tx.commit().await?);
 }
 
-
-
 async fn report_bug(Json(args): Json<BugReportArgs>) -> Result<(), Response> {
     let current_time = Utc::now().to_rfc3339();
     sqlx::query!(
@@ -357,7 +368,6 @@ async fn report_bug(Json(args): Json<BugReportArgs>) -> Result<(), Response> {
 
     Ok(())
 }
-
 
 const fn minutes(minutes: u64) -> Duration {
     Duration::from_secs(60 * minutes)
@@ -403,7 +413,6 @@ pub async fn get_characters_to_crawl(
 
     Ok(Json(todo))
 }
-
 
 pub async fn get_hof_pages_to_crawl(
     Json(args): Json<GetHofArgs>,

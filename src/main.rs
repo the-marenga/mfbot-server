@@ -61,6 +61,8 @@ pub async fn scrapbook_advice(
 
     let mut filter = format!("WHERE server_id = {server_id} ");
 
+    // FIXME: This is almost guaranteed to be exploitable. Use querybuilder
+    // instead
     if !collected.is_empty() {
         filter.push_str("AND ident NOT IN (");
         for (pos, ident) in collected.into_iter().enumerate() {
@@ -75,7 +77,7 @@ pub async fn scrapbook_advice(
     }
 
     let sql = format!(
-        "SELECT name, new_count
+        "SELECT name as player_name, new_count
         FROM player
         NATURAL JOIN (
             SELECT player_id, count(*) as new_count

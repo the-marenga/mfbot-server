@@ -10,13 +10,10 @@ use chrono::Utc;
 use db::{get_db, get_server_id};
 use log::error;
 use mfbot_server::*;
-use sf_api::{
-    gamestate::{
-        ServerTime,
-        social::{HallOfFamePlayer, OtherPlayer},
-        unlockables::{EquipmentIdent, ScrapBook},
-    },
-    misc::sha1_hash,
+use sf_api::gamestate::{
+    ServerTime,
+    social::{HallOfFamePlayer, OtherPlayer},
+    unlockables::{EquipmentIdent, ScrapBook},
 };
 use sqlx::QueryBuilder;
 
@@ -239,7 +236,8 @@ async fn insert_player(
         sqlx::query!(
             "UPDATE player
             SET level = ?, attributes = ?, next_report_attempt = ?,
-                last_reported = ?, last_changed = ?, equip_count = ?, xp = ?
+                last_reported = ?, last_changed = ?, equip_count = ?, xp = ?, \
+             honor = ?
             WHERE player_id = ?",
             other.level,
             attributes,
@@ -248,7 +246,8 @@ async fn insert_player(
             last_changed,
             equip_count,
             experience,
-            existing.player_id
+            other.honor,
+            existing.player_id,
         )
         .execute(&mut *tx)
         .await?;

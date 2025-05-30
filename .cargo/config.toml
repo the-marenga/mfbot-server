@@ -1,2 +1,2 @@
 [env]
-DATABASE_URL="sqlite:mfbot.db"
+DATABASE_URL = "postgres://localhost/mfbot"

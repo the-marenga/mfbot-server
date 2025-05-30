@@ -1,46 +1,33 @@
-use std::{collections::HashMap, sync::LazyLock};
+use std::{collections::HashMap, sync::LazyLock, time::Duration};
 
-use log::error;
-use sqlx::{Pool, Sqlite, sqlite::*};
+use sqlx::{Pool, Postgres, postgres::PgPoolOptions};
 use tokio::sync::RwLock;
 
 use crate::MFBotError;
+pub async fn get_db() -> Result<Pool<Postgres>, MFBotError> {
+    static DB: async_once_cell::OnceCell<sqlx::Pool<sqlx::Postgres>> =
+        async_once_cell::OnceCell::new();
 
-pub async fn get_db() -> Result<sqlx::Pool<Sqlite>, MFBotError> {
-    use async_once_cell::OnceCell;
-    static DB: OnceCell<sqlx::Pool<Sqlite>> = OnceCell::new();
-    DB.get_or_try_init(async {
-        let options = SqliteConnectOptions::new()
-            .filename(env!("DATABASE_URL").split_once(":").unwrap().1)
-            .journal_mode(SqliteJournalMode::Wal)
-            .synchronous(SqliteSynchronous::Normal)
-            .auto_vacuum(sqlx::sqlite::SqliteAutoVacuum::Incremental)
-            .foreign_keys(true)
-            .optimize_on_close(true, Some(u32::MAX))
-            .create_if_missing(true);
-
-        let pool = SqlitePoolOptions::new()
-            .max_connections(1)
-            .min_connections(1)
-            .connect_with(options)
-            .await
-            .inspect_err(|e| {
-                error!("Database connection error: {:?}", e);
-            })?;
-
-        Result::<sqlx::Pool<Sqlite>, MFBotError>::Ok(pool)
-    })
-    .await
-    .cloned()
+    Ok(DB
+        .get_or_try_init(
+            PgPoolOptions::new()
+                .max_connections(500)
+                .max_lifetime(Some(Duration::from_secs(60 * 3)))
+                .min_connections(10)
+                .acquire_timeout(Duration::from_secs(100))
+                .connect(env!("DATABASE_URL")),
+        )
+        .await?
+        .to_owned())
 }
 
-static LOOKUP_CACHE: LazyLock<RwLock<HashMap<String, i64>>> =
+static LOOKUP_CACHE: LazyLock<RwLock<HashMap<String, i32>>> =
     LazyLock::new(|| RwLock::const_new(HashMap::new()));
 
 pub async fn get_server_id(
-    db: &Pool<Sqlite>,
+    db: &Pool<Postgres>,
     mut url: String,
-) -> Result<i64, MFBotError> {
+) -> Result<i32, MFBotError> {
     if !url.starts_with("http") {
         url = format!("https://{url}");
     }

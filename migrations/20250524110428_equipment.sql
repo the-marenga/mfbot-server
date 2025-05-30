@@ -1,96 +1,96 @@
 CREATE TABLE server (
-    server_id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+    server_id SERIAL PRIMARY KEY,
     url TEXT UNIQUE NOT NULL,
-    last_hof_crawl INT NOT NULL DEFAULT 0
+    last_hof_crawl TIMESTAMP NOT NULL DEFAULT now ()
 );
 
 CREATE TABLE todo_hof_page (
-    server_id INTEGER NOT NULL REFERENCES server (server_id),
-    idx INTEGER NOT NULL,
-    next_report_attempt INT NOT NULL DEFAULT 0,
+    server_id INT NOT NULL REFERENCES server (server_id),
+    idx INT NOT NULL,
+    next_report_attempt TIMESTAMP NOT NULL DEFAULT now (),
     PRIMARY KEY (server_id, idx)
 );
 
 CREATE INDEX hof_todo_idx ON todo_hof_page (server_id);
 
 CREATE TABLE player (
-    player_id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
-    server_id INTEGER NOT NULL REFERENCES server (server_id),
+    player_id SERIAL PRIMARY KEY,
+    server_id INT NOT NULL REFERENCES server (server_id),
     name TEXT NOT NULL,
     -- The current level of this player
     level INT,
     -- The current xp of this player
-    xp INT,
+    xp BIGINT,
     -- The current xp of this player
     honor INT,
     -- The total sum of all attributes this player has
-    attributes INT,
+    attributes BIGINT,
     -- The next time, that this player is scheduled to be looked at again
-    next_report_attempt INT NOT NULL DEFAULT 0,
+    next_report_attempt TIMESTAMP NOT NULL DEFAULT now (),
     -- The last time, that this player was reported at
-    last_reported INT,
+    last_reported TIMESTAMP,
     -- The last time, that this player has changed in any way (xp/attributes)
-    last_changed INT,
+    last_changed TIMESTAMP,
     -- The last time this player was confirmed logged in through the guild
-    last_online INT,
+    last_online TIMESTAMP,
     -- The amount of equipped items
-    equip_count INT,
+    equip_count SMALLINT,
     -- Wether or not this player has been removed from the server
-    is_removed BOOL NOT NULL DEFAULT 0,
+    is_removed BOOLEAN NOT NULL DEFAULT FALSE,
     UNIQUE (server_id, name)
 );
 
-CREATE INDEX player_stats_idx ON player (player_id, level, attributes)
+CREATE INDEX player_stats_idx ON player (level, attributes) INCLUDE (player_id, name)
 WHERE
     is_removed = false;
 
-CREATE INDEX player_nude_idx ON player (server_id, equip_count, level, attributes)
+CREATE INDEX player_nude_idx ON player (server_id, attributes, level)
 WHERE
-    is_removed = false;
+    is_removed = false
+    AND equip_count < 3;
 
 CREATE INDEX player_crawl_idx ON player (server_id, next_report_attempt)
 WHERE
     is_removed = false;
 
 CREATE TABLE guild (
-    guild_id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
-    server_id INTEGER NOT NULL REFERENCES server (server_id),
+    guild_id SERIAL PRIMARY KEY,
+    server_id INT NOT NULL REFERENCES server (server_id),
     name TEXT NOT NULL,
-    is_removed BOOL NOT NULL DEFAULT 0,
+    is_removed BOOLEAN NOT NULL DEFAULT FALSE,
     UNIQUE (server_id, name)
 );
 
 CREATE TABLE description (
-    description_id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+    description_id SERIAL PRIMARY KEY,
     description TEXT UNIQUE
 );
 
 CREATE TABLE otherplayer_resp (
-    otherplayer_resp_id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
-    otherplayer_resp BLOB NOT NULL,
+    otherplayer_resp_id SERIAL PRIMARY KEY,
+    otherplayer_resp BYTEA NOT NULL,
     hash TEXT NOT NULL UNIQUE
 );
 
 CREATE TABLE player_info (
-    player_info_id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
-    player_id INTEGER NOT NULL REFERENCES player (player_id),
-    fetch_time INTEGER NOT NULL,
-    xp INTEGER NOT NULL,
+    player_info_id SERIAL PRIMARY KEY,
+    player_id INT NOT NULL REFERENCES player (player_id),
+    fetch_time TIMESTAMP NOT NULL,
+    xp BIGINT NOT NULL,
     honor INT NOT NULL,
-    level INTEGER NOT NULL,
-    soldier_advice INTEGER NOT NULL,
-    description_id INTEGER NOT NULL,
-    guild_id INTEGER REFERENCES guild (guild_id),
-    otherplayer_resp_id INTEGER NOT NULL REFERENCES otherplayer_resp (otherplayer_resp_id)
+    level INT NOT NULL,
+    soldier_advice BIGINT NOT NULL,
+    description_id INT NOT NULL,
+    guild_id INT REFERENCES guild (guild_id),
+    otherplayer_resp_id INT NOT NULL REFERENCES otherplayer_resp (otherplayer_resp_id)
 );
 
 CREATE INDEX player_info_idx ON player_info (player_id, fetch_time);
 
 CREATE TABLE equipment (
-    server_id INTEGER NOT NULL,
-    player_id INTEGER NOT NULL,
-    ident INT NOT NULL,
-    FOREIGN KEY (player_id) REFERENCES player (player_id)
+    server_id INT NOT NULL,
+    player_id INT NOT NULL REFERENCES player (player_id),
+    ident INT NOT NULL
 );
 
 CREATE INDEX equipment_lookup_idx ON equipment (server_id, player_id, ident);

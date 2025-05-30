@@ -1,6 +1,6 @@
 -- Add migration script here
 CREATE TABLE error (
-    error_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    error_id SERIAL PRIMARY KEY,
     stacktrace TEXT,
     version INT,
     additional_info TEXT,
@@ -8,5 +8,5 @@ CREATE TABLE error (
     arch TEXT,
     error_text TEXT,
     hwid TEXT,
-    timestamp TEXT
-)
+    timestamp TIMESTAMP
+);

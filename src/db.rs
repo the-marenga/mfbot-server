@@ -1,9 +1,10 @@
 use std::{collections::HashMap, sync::LazyLock, time::Duration};
 
+use chrono::Utc;
 use sqlx::{Pool, Postgres, postgres::PgPoolOptions};
 use tokio::sync::RwLock;
 
-use crate::MFBotError;
+use crate::{MFBotError, days};
 pub async fn get_db() -> Result<Pool<Postgres>, MFBotError> {
     static DB: async_once_cell::OnceCell<sqlx::Pool<sqlx::Postgres>> =
         async_once_cell::OnceCell::new();
@@ -50,12 +51,14 @@ pub async fn get_server_id(
     if let Some(id) = cache.get(&url) {
         return Ok(*id);
     }
+    let time = (Utc::now() - days(30)).naive_utc();
     let server_id = sqlx::query_scalar!(
-        "INSERT INTO server (url)
-        VALUES ($1)
+        "INSERT INTO server (url, last_hof_crawl)
+        VALUES ($1, $2)
         ON CONFLICT(url) DO UPDATE SET last_hof_crawl = server.last_hof_crawl
         RETURNING server_id",
-        url
+        url,
+        time
     )
     .fetch_one(db)
     .await

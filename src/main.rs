@@ -311,15 +311,30 @@ async fn insert_player(
     }
 
     let description = player.description.unwrap_or_default();
+
     let description_id = sqlx::query_scalar!(
-        "INSERT INTO description (description) VALUES ($1)
-        ON CONFLICT(description)
-        DO UPDATE SET description_id = description.description_id
-        RETURNING description_id",
+        "SELECT description_id
+        FROM description
+        WHERE description = $1",
         description,
     )
-    .fetch_one(&mut *tx)
+    .fetch_optional(&mut *tx)
     .await?;
+
+    let description_id = match description_id {
+        Some(d) => d,
+        None => {
+            sqlx::query_scalar!(
+                "INSERT INTO description (description) VALUES ($1)
+            ON CONFLICT(description)
+            DO UPDATE SET description_id = description.description_id
+            RETURNING description_id",
+                description,
+            )
+            .fetch_one(&mut *tx)
+            .await?
+        }
+    };
 
     use zstd::stream::encode_all;
 

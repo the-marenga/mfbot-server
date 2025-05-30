@@ -278,20 +278,36 @@ async fn insert_player(
     };
 
     let mut guild_id = None;
-    if let Some(guild) = &player.guild {
+    if let Some(guild) = &player.guild.filter(|a| !a.is_empty()) {
         let guild_name = guild;
-        let id = sqlx::query_scalar!(
-            "INSERT INTO guild
-            (server_id, name)
-            VALUES ($1, $2)
-            ON CONFLICT(server_id, name) DO UPDATE SET is_removed = FALSE
-            RETURNING guild_id",
+
+        let mut id = sqlx::query_scalar!(
+            "SELECT guild_id
+            FROM guild
+            WHERE server_id = $1 AND name = $2",
             server_id,
             guild_name,
         )
-        .fetch_one(&mut *tx)
+        .fetch_optional(&mut *tx)
         .await?;
-        guild_id = Some(id);
+
+        if id.is_none() {
+            id = Some(
+                sqlx::query_scalar!(
+                    "INSERT INTO guild
+                (server_id, name)
+                VALUES ($1, $2)
+                ON CONFLICT(server_id, name) DO UPDATE SET is_removed = FALSE
+                RETURNING guild_id",
+                    server_id,
+                    guild_name,
+                )
+                .fetch_one(&mut *tx)
+                .await?,
+            );
+        }
+
+        guild_id = id;
     }
 
     let description = player.description.unwrap_or_default();

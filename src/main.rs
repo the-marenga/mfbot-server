@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use axum::{
     Json, Router,
     http::{
@@ -80,7 +82,7 @@ async fn get_crawl_chars(
 
 async fn scrapbook_advice(
     Json(args): Json<ScrapBookAdviceArgs>,
-) -> Result<Json<Vec<ScrapBookAdvice>>, Response> {
+) -> Result<Json<Arc<[ScrapBookAdvice]>>, Response> {
     get_scrapbook_advice(args)
         .await
         .map_err(to_response)

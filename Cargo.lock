@@ -1387,7 +1387,7 @@ dependencies = [
 [[package]]
 name = "sf-info-lib"
 version = "0.1.0"
-source = "git+https://github.com/the-marenga/sf-info-lib.git#a8564480aa3332c15f8b691095b7b3296116dd80"
+source = "git+https://github.com/the-marenga/sf-info-lib.git#c00552ee48a803036c6e009dd2c6d5193150e60c"
 dependencies = [
  "async-once-cell",
  "chrono",

@@ -9,7 +9,6 @@ use axum::{
     response::Response,
     routing::{get, post},
 };
-use log::error;
 use sf_info_lib::{
     db::{get_characters_to_crawl, *},
     error::SFSError,
@@ -45,15 +44,9 @@ async fn root() -> axum::response::Redirect {
 }
 
 async fn report_players(
-    Json(players): Json<Vec<RawOtherPlayer>>,
+    Json(report): Json<CrawlReport>,
 ) -> Result<(), Response> {
-    let db = get_db().await.map_err(to_response)?;
-    for player in players {
-        if let Err(err) = insert_player(&db, player).await {
-            error!("{err}");
-        }
-    }
-    Ok(())
+    handle_crawl_report(report).await.map_err(to_response)
 }
 
 async fn get_crawl_hof_pages(

@@ -14,7 +14,13 @@ use sf_info_lib::{
     error::SFSError,
     types::*,
 };
+#[cfg(not(target_env = "msvc"))]
+use tikv_jemallocator::Jemalloc;
 use tower_http::cors::{Any, CorsLayer};
+
+#[cfg(not(target_env = "msvc"))]
+#[global_allocator]
+static GLOBAL: Jemalloc = Jemalloc;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn core::error::Error>> {

@@ -10,3 +10,6 @@ sf-info-lib = { git = "https://github.com/the-marenga/sf-info-lib.git", version 
 tokio = { version = "1.47.1", features = ["macros", "rt-multi-thread"] }
 tower-http = { version = "*", features = ["cors"] }
 tracing-subscriber = "0.3.19"
+
+[target.'cfg(not(target_env = "msvc"))'.dependencies]
+tikv-jemallocator = "0.6"

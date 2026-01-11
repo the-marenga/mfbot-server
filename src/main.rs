@@ -10,7 +10,7 @@ use axum::{
     routing::{get, post},
 };
 use sf_info_lib::{
-    db::{get_characters_to_crawl, *},
+    db::{get_characters_to_crawl, underworld::get_best_nude_players, *},
     error::SFSError,
     types::*,
 };
@@ -34,6 +34,7 @@ async fn main() -> Result<(), Box<dyn core::error::Error>> {
     let app = Router::new()
         .route("/", get(root))
         .route("/scrapbook_advice", post(scrapbook_advice))
+        .route("/underworld_advice", post(underworld_advice))
         .route("/get_crawl_hof_pages", post(get_crawl_hof_pages))
         .route("/get_crawl_players", post(get_crawl_chars))
         .route("/report_players", post(report_players))
@@ -83,6 +84,15 @@ async fn scrapbook_advice(
     Json(args): Json<ScrapBookAdviceArgs>,
 ) -> Result<Json<Arc<[ScrapBookAdvice]>>, Response> {
     get_scrapbook_advice(args)
+        .await
+        .map_err(to_response)
+        .map(Json)
+}
+
+async fn underworld_advice(
+    Json(args): Json<UnderworldAdviceArgs>,
+) -> Result<Json<Arc<[UnderworldAdvice]>>, Response> {
+    get_best_nude_players(args)
         .await
         .map_err(to_response)
         .map(Json)

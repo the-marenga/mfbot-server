@@ -4,11 +4,12 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-axum = "0.8.8"
+axum = "0.8.9"
+chrono = "0.4.44"
 sf-info-lib = { git = "https://github.com/the-marenga/sf-info-lib.git", version = "0.1.0" }
-tokio = { version = "1.49.0", features = ["macros", "rt-multi-thread"] }
-tower-http = { version = "0.6.8", features = ["cors"] }
-tracing-subscriber = "0.3.22"
+tokio = { version = "1.52.3", features = ["macros", "rt-multi-thread"] }
+tower-http = { version = "0.6.10", features = ["cors"] }
+tracing-subscriber = "0.3.23"
 
 [target.'cfg(not(target_env = "msvc"))'.dependencies]
 tikv-jemallocator = "0.6"

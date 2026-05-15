@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
 use axum::{
     Json, Router,
@@ -34,6 +34,7 @@ async fn main() -> Result<(), Box<dyn core::error::Error>> {
     let app = Router::new()
         .route("/", get(root))
         .route("/scrapbook_advice", post(scrapbook_advice))
+        .route("/guild_history", post(guild_history))
         .route("/underworld_advice", post(underworld_advice))
         .route("/get_crawl_hof_pages", post(get_crawl_hof_pages))
         .route("/get_crawl_players", post(get_crawl_chars))
@@ -84,6 +85,16 @@ async fn scrapbook_advice(
     Json(args): Json<ScrapBookAdviceArgs>,
 ) -> Result<Json<Arc<[ScrapBookAdvice]>>, Response> {
     get_scrapbook_advice(args)
+        .await
+        .map_err(to_response)
+        .map(Json)
+}
+
+async fn guild_history(
+    Json(args): Json<GetGuildHistoryArgs>,
+) -> Result<Json<HashMap<String, Vec<(String, chrono::NaiveDateTime)>>>, Response>
+{
+    get_player_guild_history(args)
         .await
         .map_err(to_response)
         .map(Json)
